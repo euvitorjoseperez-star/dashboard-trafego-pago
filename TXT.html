@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Dashboard de Tráfego Pago</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+    font-family: 'Inter', sans-serif;
+    background: #F8FAFC;
+    margin: 0;
+    padding: 24px;
+    color: #0F172A;
+}
+
+h1 {
+    text-align: center;
+    font-size: 28px;
+    margin-bottom: 24px;
+}
+
+.container {
+    max-width: 1200px;
+    margin: auto;
+}
+
+.box {
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 24px;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.06);
+}
+
+input, select, button {
+    font-family: inherit;
+}
+
+button {
+    background: #2563EB;
+    color: white;
+    font-weight: 600;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 18px;
+    cursor: pointer;
+}
+
+.filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-end;
+}
+
+.filters label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #64748B;
+}
+
+.filters input, .filters select {
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid #E2E8F0;
+}
+
+.cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+}
+
+.card h4 {
+    margin: 0;
+    font-size: 13px;
+    color: #64748B;
+}
+
+.card h2 {
+    margin-top: 6px;
+    font-size: 24px;
+    font-weight: 700;
+}
+
+.grafico {
+    padding: 24px;
+}
+
+canvas {
+    width: 100% !important;
+    height: 480px !important;
+}
+</style>
+</head>
+
+<body>
+
+<h1> Dashboard de Tráfego Pago Maketing Mottanet</h1>
+
+<div class="container">
+
+    <!-- Upload -->
+    <div class="box">
+        <input type="file" id="csvFile" accept=".csv">
+    </div>
+
+    <!-- Filtros -->
+    <div class="box filters">
+        <div>
+            <label>Data inicial</label><br>
+            <input type="date" id="dataInicio">
+        </div>
+        <div>
+            <label>Data final</label><br>
+            <input type="date" id="dataFim">
+        </div>
+        <div>
+            <label>Campanha</label><br>
+            <select id="campanha">
+                <option value="">Todas</option>
+            </select>
+        </div>
+        <button onclick="aplicarFiltros()">Aplicar filtros</button>
+    </div>
+
+    <!-- KPIs -->
+    <div class="cards">
+        <div class="box card"><h4>Investimento</h4><h2 id="investimento">R$ 0</h2></div>
+        <div class="box card"><h4>Impressões</h4><h2 id="impressoes">0</h2></div>
+        <div class="box card"><h4>Cliques</h4><h2 id="cliques">0</h2></div>
+        <div class="box card"><h4>Capturas</h4><h2 id="capturas">0</h2></div>
+        <div class="box card"><h4>CPC Médio</h4><h2 id="cpc">R$ 0</h2></div>
+        <div class="box card"><h4>CPR Médio</h4><h2 id="cpl">R$ 0</h2></div>
+    </div>
+
+    <!-- Gráficos -->
+    <div class="box grafico"><canvas id="gCampanha"></canvas></div>
+    <div class="box grafico"><canvas id="gInvestimento"></canvas></div>
+    <div class="box grafico"><canvas id="gEvolucao"></canvas></div>
+
+</div>
+
+<script>
+let dadosOriginais = [];
+let g1, g2, g3;
+
+document.getElementById("csvFile").addEventListener("change", e => {
+    Papa.parse(e.target.files[0], {
+        skipEmptyLines: true,
+        complete: r => processarCSV(r.data)
+    });
+});
+
+function num(v) {
+    return Number(String(v || 0).replace(",", "."));
+}
+
+function processarCSV(linhas) {
+    let cab = [];
+    dadosOriginais = [];
+
+    linhas.forEach(l => {
+        if (l.includes("CAMPANHA")) {
+            cab = l.map(c => c.toUpperCase());
+            return;
+        }
+        if (cab.length && l.length > 3) {
+            let o = {};
+            cab.forEach((c, i) => o[c] = l[i]);
+            dadosOriginais.push(o);
+        }
+    });
+
+    carregarCampanhas();
+    aplicarFiltros();
+}
+
+function carregarCampanhas() {
+    const sel = document.getElementById("campanha");
+    sel.innerHTML = '<option value="">Todas</option>';
+    [...new Set(dadosOriginais.map(d => d.CAMPANHA))].forEach(c => {
+        sel.innerHTML += `<option>${c}</option>`;
+    });
+}
+
+function aplicarFiltros() {
+    const di = document.getElementById("dataInicio").value;
+    const df = document.getElementById("dataFim").value;
+    const camp = document.getElementById("campanha").value;
+
+    const dados = dadosOriginais.filter(d => {
+        return (!di || d.DIA >= di) &&
+               (!df || d.DIA <= df) &&
+               (!camp || d.CAMPANHA === camp);
+    });
+
+    gerarDashboard(dados);
+}
+
+function gerarDashboard(dados) {
+    let inv = 0, imp = 0, cli = 0, cap = 0;
+    let porCamp = {}, porInv = {}, porDia = {};
+
+    dados.forEach(d => {
+        inv += num(d.INVESTIMENTO);
+        imp += num(d.IMPRESSÕES);
+        cli += num(d.CLIQUES || d.CIQUES);
+        cap += num(d.CAPTURAS);
+
+        porCamp[d.CAMPANHA] = (porCamp[d.CAMPANHA] || 0) + num(d.CAPTURAS);
+        porInv[d.CAMPANHA] = (porInv[d.CAMPANHA] || 0) + num(d.INVESTIMENTO);
+        porDia[d.DIA] = (porDia[d.DIA] || 0) + num(d.CAPTURAS);
+    });
+
+    investimento.innerText = `R$ ${inv.toFixed(2)}`;
+    impressoes.innerText = imp;
+    cliques.innerText = cli;
+    capturas.innerText = cap;
+    cpc.innerText = cli ? `R$ ${(inv / cli).toFixed(2)}` : 'R$ 0';
+    cpl.innerText = cap ? `R$ ${(inv / cap).toFixed(2)}` : 'R$ 0';
+
+    grafico("gCampanha", "Capturas por Campanha", porCamp, "bar", g1, c => g1 = c);
+    grafico("gInvestimento", "Investimento por Campanha", porInv, "bar", g2, c => g2 = c);
+    grafico("gEvolucao", "Evolução Diária de Capturas", porDia, "line", g3, c => g3 = c);
+}
+
+function grafico(id, titulo, dados, tipo, chart, set) {
+    if (chart) chart.destroy();
+
+    set(new Chart(document.getElementById(id), {
+        type: tipo,
+        data: {
+            labels: Object.keys(dados),
+            datasets: [{
+                data: Object.values(dados),
+                backgroundColor: 'rgba(37,99,235,0.6)',
+                borderColor: '#2563EB',
+                borderWidth: 2,
+                fill: tipo === 'line',
+                tension: 0.35
+            }]
+        },
+        options: {
+            indexAxis: tipo === 'bar' ? 'y' : 'x',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                title: {
+                    display: true,
+                    text: titulo,
+                    font: { size: 18, weight: '600' },
+                    padding: { bottom: 20 }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: '#E5E7EB' },
+                    ticks: { color: '#475569' }
+                },
+                y: {
+                    grid: { display: false },
+                    ticks: {
+                        color: '#475569',
+                        callback: function(value) {
+                            const label = this.getLabelForValue(value);
+                            return label.length > 35 ? label.substring(0, 35) + '…' : label;
+                        }
+                    }
+                }
+            }
+        }
+    }));
+}
+</script>
+
+</body>
+</html>
